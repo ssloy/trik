@@ -61,6 +61,7 @@ public:
 
         int bytes2write   = nparams + 6;
         int byteswritten  = write(serial_fd_, instruction_packet_, bytes2write);
+        //tcdrain(serial_fd_);
 
         return bytes2write == byteswritten;
     }
