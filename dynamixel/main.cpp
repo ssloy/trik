@@ -28,7 +28,7 @@ public:
 
     Dynamixel() : serial_fd_(-1), baud_number_(1), baud_rate_(), byte_transfer_time_ms_() {
         baud_rate_ = 2000000.0f/(float)(baud_number_+1);
-        byte_transfer_time_ms_ = (float)((1000.0f / baud_rate_) * 10.0f); // in original dynamixel sdk the multiplier is 12, not 10
+        byte_transfer_time_ms_ = (float)((1000.0f / baud_rate_) * 10.0f);
     }
 
     bool open_serial(const char *serial_device) {
@@ -39,7 +39,7 @@ public:
             return false;
         }
 
-        tty_opt.c_cflag       = B1000000|CS8|CLOCAL|CREAD;
+        tty_opt.c_cflag       = B1000000|CS8|CLOCAL|CREAD; // TODO: baudrate depending on the input baud_number_ and not just default 1Mbps
         tty_opt.c_iflag       = IGNPAR;
         tty_opt.c_oflag       = 0;
         tty_opt.c_lflag       = 0;
@@ -65,29 +65,17 @@ public:
 
     bool set_goal_position(unsigned char id, int value) {
         unsigned char parameters[3] = {0x1E, low_byte(value), high_byte(value)};
-        bool ret = send_instruction_packet(id, 0x03, parameters, 3);
-        if (COMM_TXSUCCESS != ret) return false;
-
-        ret = read_status_packet();
-        if (COMM_RXSUCCESS != ret) return false;
+        return COMM_RXSUCCESS == send_instruction_read_status(id, 0x03, parameters, 3);
     }
 
     bool change_id(unsigned char old_id, unsigned char new_id) {
-        unsigned char parameters[3] = {0x03, new_id};
-        CommStatus ret = send_instruction_packet(old_id, 0x03, parameters, 2);
-        if (COMM_TXSUCCESS != ret) return false;
-
-        ret = read_status_packet();
-        if (COMM_RXSUCCESS != ret) return false;
-        return true;
+        unsigned char parameters[2] = {0x03, new_id};
+        return COMM_RXSUCCESS == send_instruction_read_status(old_id, 0x03, parameters, 2);;
     }
 
     bool get_present_position(unsigned char id, int &position) {
-        unsigned char parameters[3] = {0x24, 2};
-        CommStatus ret = send_instruction_packet(id, 0x02, parameters, 2);
-        if (COMM_TXSUCCESS != ret) return false;
-
-        ret = read_status_packet();
+        unsigned char parameters[2] = {0x24, 2};
+        CommStatus ret = send_instruction_read_status(id, 0x02, parameters, 2);
         if (COMM_RXSUCCESS != ret) return false;
 
         unsigned char nparams = status_packet_[3]-2;
@@ -98,11 +86,9 @@ public:
     }
 
     bool ping(unsigned char id) {
-        CommStatus ret = send_instruction_packet(id, 0x01, NULL, 0);
-        if (ret!=COMM_TXSUCCESS) return false;
-        ret = read_status_packet();
+        CommStatus ret = send_instruction_read_status(id, 0x01, NULL, 0);
         if (ret!=COMM_RXSUCCESS) return false;
-        return (id == status_packet_[2]);
+        return id == status_packet_[2];
     }
 
 
@@ -134,7 +120,7 @@ private:
 
     CommStatus read_status_packet() {
         memset(status_packet_, 0, max_packet_length_);
-        CommStatus ret = rx(0, 6, 6*byte_transfer_time_ms_ + 5); // if nparams=0, then the entire status packet has 6 bytes
+        CommStatus ret = rx(0, 6, 6*byte_transfer_time_ms_ + 5); // if nparams=0 (most of the status packets), then the entire status packet has 6 bytes: one call of rx()
         if (ret!=COMM_RXSUCCESS) {
             return ret;
         }
@@ -183,6 +169,12 @@ private:
         // TODO: halfdupex TX OFF
 
         return packet_length == nbytes_sent ? COMM_TXSUCCESS : COMM_TXFAIL;
+    }
+
+    CommStatus send_instruction_read_status(unsigned char id, unsigned char instruction, unsigned char *parameters, unsigned char nparams) {
+        CommStatus ret = send_instruction_packet(id, instruction, parameters, nparams);
+        if (COMM_TXSUCCESS != ret) return ret;
+        return read_status_packet();
     }
 
 
