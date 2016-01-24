@@ -14,7 +14,7 @@ inline unsigned char high_byte(int v) { return (v & 0xFF00) >> 8; }
 inline unsigned char  low_byte(int v) { return  v & 0xFF; }
 
 
-Dynamixel::Dynamixel() : serial_fd_(-1), baud_number_(1), baud_rate_(), byte_transfer_time_ms_() {
+Dynamixel::Dynamixel() : serial_fd_(-1), baud_number_(1), baud_rate_(), byte_transfer_time_ms_(), rx_error_flag_(true) {
     baud_rate_ = 2000000.0f/(float)(baud_number_+1);
     byte_transfer_time_ms_ = (float)((1000.0f / baud_rate_) * 10.0f);
 }
@@ -50,52 +50,31 @@ unsigned char Dynamixel::status_error_byte() {
     return status_packet_[4];
 }
 
-bool Dynamixel::set_goal_position(unsigned char id, int value) {
-    unsigned char parameters[3] = {0x1E, low_byte(value), high_byte(value)};
-    return COMM_RXSUCCESS == send_instruction_read_status(id, 0x03, parameters, 3);
+Dynamixel::CommStatus Dynamixel::set_goal_position(unsigned char id, int value) {
+    return write_word(id, 0x1E, value);
 }
 
-bool Dynamixel::change_id(unsigned char old_id, unsigned char new_id) {
-    unsigned char parameters[2] = {0x03, new_id};
-    return COMM_RXSUCCESS == send_instruction_read_status(old_id, 0x03, parameters, 2);
+Dynamixel::CommStatus Dynamixel::change_id(unsigned char old_id, unsigned char new_id) {
+    return write_byte(old_id, 0x03, new_id);
 }
 
-bool Dynamixel::reset_to_factory_defaults(unsigned char id) {
-    return COMM_RXSUCCESS == send_instruction_read_status(id, 0x06, NULL, 0);
+Dynamixel::CommStatus Dynamixel::reset_to_factory_defaults(unsigned char id) {
+    return send_instruction_read_status(id, 0x06, NULL, 0);
 }
 
-
-bool Dynamixel::get_present_position(unsigned char id, int &position) {
-    unsigned char parameters[2] = {0x24, 2};
-    Dynamixel::CommStatus ret = send_instruction_read_status(id, 0x02, parameters, 2);
-    if (COMM_RXSUCCESS != ret) return false;
-
-    unsigned char nparams = status_packet_[3]-2;
-    unsigned char rxid = status_packet_[2];
-    if (rxid!=id || nparams!=2) return false;
-    position = (status_packet_[6]<<8) | status_packet_[5];
-    return true;
+Dynamixel::CommStatus Dynamixel::get_present_position(unsigned char id, int &position) {
+    return read_word(id, 0x24, position);
 }
 
-bool Dynamixel::is_moving(unsigned char id, bool &moving) {
-    unsigned char parameters[2] = {0x2E, 1};
-    Dynamixel::CommStatus ret = send_instruction_read_status(id, 0x02, parameters, 2);
-    if (COMM_RXSUCCESS != ret) return false;
-
-    unsigned char nparams = status_packet_[3]-2;
-    unsigned char rxid = status_packet_[2];
-    if (rxid!=id || nparams!=1) return false;
-    moving = (1==status_packet_[5]);
-    return true;
+Dynamixel::CommStatus Dynamixel::is_moving(unsigned char id, unsigned char &moving) {
+    Dynamixel::CommStatus ret = read_byte(id, 0x2E, moving);
+    return ret;
 }
 
-
-// contrary to above functions that return true = successful communication (TX followed by RX),
 // ping() returns true if and only if the communication was successful AND the id matches
 bool Dynamixel::ping(unsigned char id) {
     Dynamixel::CommStatus ret = send_instruction_read_status(id, 0x01, NULL, 0);
-    if (ret!=COMM_RXSUCCESS) return false;
-    return id == status_packet_[2];
+    return ret==COMM_RXSUCCESS && id == status_packet_[2];
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -122,7 +101,9 @@ Dynamixel::CommStatus Dynamixel::rx(unsigned char offset, unsigned char toread, 
         clock_gettime(CLOCK_REALTIME, &spec);
         cur_s  = spec.tv_sec;
         cur_ms = spec.tv_nsec/1.0e6;
-        if ((received < toread) && ((cur_s-start_s)*1000+(cur_ms-start_ms) > timeout_ms)) return COMM_RXTIMEOUT;
+        if ((received < toread) && ((cur_s-start_s)*1000+(cur_ms-start_ms) > timeout_ms)) {
+            return COMM_RXTIMEOUT;
+        }
     }
     return COMM_RXSUCCESS;
 }
@@ -131,21 +112,36 @@ Dynamixel::CommStatus Dynamixel::rx(unsigned char offset, unsigned char toread, 
 // first perform one rx() call to get the number of parameters to fetch
 // then another one to read the rest of the packet
 Dynamixel::CommStatus Dynamixel::read_status_packet() {
-    const unsigned char first_rx_nbytes = 6; // if nparams=0 (most of the status packets), then the entire status packet has 6 bytes: one call of rx()
+    unsigned char first_rx_nbytes = 6; // if nparams=0 (most of the status packets), then the entire status packet has 6 bytes: one call of rx()
     memset(status_packet_, 0, max_packet_length_);
     Dynamixel::CommStatus ret = rx(0, first_rx_nbytes, first_rx_nbytes*byte_transfer_time_ms_ + 5);
     if (ret!=COMM_RXSUCCESS) {
+        rx_error_flag_ = true;
         return ret;
     }
 
-    if (0xFF!=status_packet_[0] || 0xFF!=status_packet_[1]) {
+    bool found = false;
+    for (unsigned char i=0; i<first_rx_nbytes-3; i++) {
+        if (0xFF==status_packet_[i] || 0xFF!=status_packet_[i+1]) {
+            found = true;
+            if (i>0) {
+                first_rx_nbytes -= i;
+                memmove(status_packet_, status_packet_+i, first_rx_nbytes);
+            }
+            break;
+        }
+    }
+
+    if (!found) {
+        rx_error_flag_ = true;
         return COMM_RXCORRUPT;
     }
 
     unsigned char nparams = status_packet_[3]-2;
-    if (nparams>0) {
+    if (nparams+6-first_rx_nbytes>0) {
         ret = rx(first_rx_nbytes, nparams+6-first_rx_nbytes, (nparams)*byte_transfer_time_ms_);
         if (ret!=COMM_RXSUCCESS) {
+            rx_error_flag_ = true;
             return ret;
         }
     }
@@ -157,6 +153,7 @@ Dynamixel::CommStatus Dynamixel::read_status_packet() {
     checksum = ~checksum;
 
     if (!ret || checksum!=status_packet_[nparams+5]) {
+        rx_error_flag_ = true; 
         return COMM_RXCORRUPT;
     }
 
@@ -164,7 +161,7 @@ Dynamixel::CommStatus Dynamixel::read_status_packet() {
 }
 
 // send one instruction packet, no listener for the status packet
-Dynamixel::CommStatus Dynamixel::send_instruction_packet(unsigned char id, unsigned char instruction, unsigned char *parameters, unsigned char nparams) {
+Dynamixel::CommStatus Dynamixel::send_instruction_packet(unsigned char id, unsigned char instruction, const unsigned char *parameters, unsigned char nparams) {
     instruction_packet_[0] = instruction_packet_[1] = 0xFF;
     instruction_packet_[2] = id;
     instruction_packet_[3] = nparams + 2;
@@ -176,6 +173,11 @@ Dynamixel::CommStatus Dynamixel::send_instruction_packet(unsigned char id, unsig
         checksum += instruction_packet_[i+2];
     instruction_packet_[nparams+5] = ~checksum;
 
+    if (rx_error_flag_) {
+        tcflush(serial_fd_, TCIFLUSH);
+        rx_error_flag_ = false;
+    }
+
     // TODO: halfdupex TX ON
     int packet_length   = nparams + 6;
     int nbytes_sent  = write(serial_fd_, instruction_packet_, packet_length);
@@ -185,11 +187,53 @@ Dynamixel::CommStatus Dynamixel::send_instruction_packet(unsigned char id, unsig
     return packet_length == nbytes_sent ? COMM_TXSUCCESS : COMM_TXFAIL;
 }
 
-// send an instruction and then read the status
-Dynamixel::CommStatus Dynamixel::send_instruction_read_status(unsigned char id, unsigned char instruction, unsigned char *parameters, unsigned char nparams) {
+Dynamixel::CommStatus Dynamixel::send_instruction_read_status(unsigned char id, unsigned char instruction, const unsigned char *parameters, unsigned char nparams) {
     Dynamixel::CommStatus ret = send_instruction_packet(id, instruction, parameters, nparams);
     if (COMM_TXSUCCESS != ret) return ret;
     ret = read_status_packet();
+    if (COMM_TXSUCCESS != ret) return ret;
+    if (id == status_packet_[2]) {
+        rx_error_flag_ = true;
+        return COMM_RXCORRUPT;
+    }
     return ret;
+}
+
+Dynamixel::CommStatus Dynamixel::read_byte(unsigned char id, unsigned char address, unsigned char &value) {
+    const unsigned char parameters[2] = {address, 1};
+    Dynamixel::CommStatus ret = send_instruction_read_status(id, 0x02, parameters, 2);
+    if (COMM_RXSUCCESS != ret) return ret;
+
+    unsigned char nparams = status_packet_[3]-2;
+    if (nparams!=1) {
+        rx_error_flag_ = true;
+        return COMM_RXCORRUPT;
+    }
+    value = status_packet_[5];
+    return COMM_RXSUCCESS;
+}
+
+Dynamixel::CommStatus Dynamixel::read_word(unsigned char id, unsigned char address, int &value) {
+    const unsigned char parameters[2] = {address, 2};
+    Dynamixel::CommStatus ret = send_instruction_read_status(id, 0x02, parameters, 2);
+    if (COMM_RXSUCCESS != ret) return ret;
+
+    unsigned char nparams = status_packet_[3]-2;
+    if (nparams!=2) {
+        rx_error_flag_ = true;
+        return COMM_RXCORRUPT;
+    }
+    value = (status_packet_[6]<<8) | status_packet_[5];
+    return COMM_RXSUCCESS;
+}
+
+Dynamixel::CommStatus Dynamixel::write_byte(unsigned char id, unsigned char address, unsigned char value) {
+    const unsigned char parameters[3] = {address, value};
+    return send_instruction_read_status(id, 0x03, parameters, 2);
+}
+
+Dynamixel::CommStatus Dynamixel::write_word(unsigned char id, unsigned char address, int value) {
+    const unsigned char parameters[3] = {address, low_byte(value), high_byte(value)};
+    return send_instruction_read_status(id, 0x03, parameters, 3);
 }
 
