@@ -21,6 +21,9 @@ public:
 
     unsigned char status_error_byte();
 
+    CommStatus torque_enable(unsigned char id);
+    CommStatus torque_disable(unsigned char id);
+
     CommStatus set_goal_position(unsigned char id, int value);
     CommStatus get_present_position(unsigned char id, int &position);
     CommStatus is_moving(unsigned char id, unsigned char &moving);

@@ -50,6 +50,14 @@ unsigned char Dynamixel::status_error_byte() {
     return status_packet_[4];
 }
 
+Dynamixel::CommStatus Dynamixel::torque_enable(unsigned char id) {
+    return write_byte(id, 0x18, 1);
+}
+
+Dynamixel::CommStatus Dynamixel::torque_disable(unsigned char id) {
+    return write_byte(id, 0x18, 0);
+}
+
 Dynamixel::CommStatus Dynamixel::set_goal_position(unsigned char id, int value) {
     return write_word(id, 0x1E, value);
 }

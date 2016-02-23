@@ -10,7 +10,14 @@
 
 #include "dynamixel.h"
 
+
+int leg_up[] = {402, 659, 291, 517, 663, 340, 621, 613, 333, 493, 590, 477};
+
+
 int main() {
+    srand(time(NULL));
+
+    int home_pos[] = {412, 700, 220};
     Dynamixel dxl;
 
     srand(time(NULL));
@@ -19,19 +26,26 @@ int main() {
         return -1;
     }
 
-    for (unsigned char i=0; i<254; i++) {
-        if (dxl.ping(i)) {
-           std::cerr << "id " << (int)i << " is found on the bus, setting the zero position" << std::endl;
-            std::cerr << "setting goal position: " << dxl.set_goal_position(i, 512+rand()%10) << std::endl;
-            unsigned char moving = 0;
-            while (Dynamixel::COMM_RXSUCCESS==dxl.is_moving(i, moving) && moving) {
-                usleep(10000);
-            }
-            int pos = -1;
-            std::cerr << "reading actual position: " << dxl.get_present_position(i, pos) << " ";
-            std::cerr << pos << std::endl;
+    int leg = rand()%4;
+    for (unsigned char i=0; i<4; i++) {
+        for (unsigned char j=0; j<3; j++) {
+            unsigned char id = i*10 + j;
+//            std::cerr << "setting goal position: " << dxl.set_goal_position(id, leg_up[((i+leg)%4)*3+j]) << std::endl;
+            std::cerr << "setting goal position: " << dxl.set_goal_position(id, home_pos[j]) << std::endl;
         }
     }
+
+    /*
+    for (unsigned char i=0; i<4; i++) {
+        for (unsigned char j=0; j<3; j++) {
+            unsigned char id = i*10 + j;
+            int pos = -1;
+            std::cerr << "reading actual position: " << dxl.get_present_position(id, pos) << " ";
+            std::cerr << pos << std::endl;
+        }
+     }
+     */
+
 
     dxl.close_serial();
     return -1;
