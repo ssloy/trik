@@ -15,7 +15,7 @@ public:
         COMM_RXCORRUPT = 7
     };
 
-    Dynamixel();
+    Dynamixel(int baud_number);
     bool open_serial(const char *serial_device);
     void close_serial();
 
@@ -31,9 +31,11 @@ public:
     bool ping(unsigned char id);
 
     CommStatus change_id(unsigned char old_id, unsigned char new_id);
+    CommStatus set_baud_rate(unsigned char id, unsigned char rate);
     CommStatus reset_to_factory_defaults(unsigned char id);
 
 private:
+    int set_rts(int level);
 
     CommStatus rx(unsigned char offset, unsigned char toread, int timeout_ms);
     CommStatus read_status_packet();
@@ -44,6 +46,7 @@ private:
     CommStatus write_word(unsigned char id, unsigned char address,           int  value);
     CommStatus read_byte (unsigned char id, unsigned char address, unsigned char &value);
     CommStatus read_word (unsigned char id, unsigned char address,           int &value);
+
 
     static const int max_packet_length_ = 255;
     int serial_fd_;

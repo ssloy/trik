@@ -3,6 +3,7 @@
 #include <termios.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <sys/ioctl.h>
 
 #include <errno.h>
 #include <cstdlib>
@@ -13,8 +14,7 @@
 inline unsigned char high_byte(int v) { return (v & 0xFF00) >> 8; }
 inline unsigned char  low_byte(int v) { return  v & 0xFF; }
 
-
-Dynamixel::Dynamixel() : serial_fd_(-1), baud_number_(1), baud_rate_(), byte_transfer_time_ms_(), rx_error_flag_(true) {
+Dynamixel::Dynamixel(int baud_number) : serial_fd_(-1), baud_number_(baud_number), baud_rate_(), byte_transfer_time_ms_(), rx_error_flag_(true) {
     baud_rate_ = 2000000.0f/(float)(baud_number_+1);
     byte_transfer_time_ms_ = (float)((1000.0f / baud_rate_) * 10.0f);
 }
@@ -23,10 +23,26 @@ bool Dynamixel::open_serial(const char *serial_device) {
     if ((serial_fd_ = open(serial_device, O_RDWR|O_NOCTTY|O_NONBLOCK)) < 0) {
         return false;
     }
+    tcflag_t c_cflag = B1000000;
+    switch (baud_number_) {
+        case 1:   c_cflag = B1000000; break;
+        case 3:   c_cflag = B500000;  break;
+//        case 4:   c_cflag = B400000;  break;
+//        case 7:   c_cflag = B250000;  break;
+//        case 9:   c_cflag = B200000;  break;
+        case 16:  c_cflag = B115200;  break;
+        case 34:  c_cflag = B57600;   break;
+        case 103: c_cflag = B19200;   break;
+        case 207: c_cflag = B9600;    break;
+        default: {
+            std::cerr << "Bad baud number" << std::endl;
+            return false;
+        }
+    }
 
     termios tty_opt;
     memset(&tty_opt, 0, sizeof(tty_opt));
-    tty_opt.c_cflag       = B1000000|CS8|CLOCAL|CREAD; // TODO: baudrate depending on the input baud_number_ and not just default 1Mbps
+    tty_opt.c_cflag       = c_cflag|CS8|CLOCAL|CREAD;
     tty_opt.c_iflag       = IGNPAR;
     tty_opt.c_oflag       = 0;
     tty_opt.c_lflag       = 0;
@@ -35,6 +51,8 @@ bool Dynamixel::open_serial(const char *serial_device) {
 
     tcflush(serial_fd_, TCIFLUSH);
     tcsetattr(serial_fd_, TCSANOW, &tty_opt);
+
+    set_rts(1);
 
     return true;
 }
@@ -64,6 +82,10 @@ Dynamixel::CommStatus Dynamixel::set_goal_position(unsigned char id, int value) 
 
 Dynamixel::CommStatus Dynamixel::change_id(unsigned char old_id, unsigned char new_id) {
     return write_byte(old_id, 0x03, new_id);
+}
+
+Dynamixel::CommStatus Dynamixel::set_baud_rate(unsigned char id, unsigned char rate) {
+    return write_byte(id, 0x04, rate);
 }
 
 Dynamixel::CommStatus Dynamixel::reset_to_factory_defaults(unsigned char id) {
@@ -161,7 +183,7 @@ Dynamixel::CommStatus Dynamixel::read_status_packet() {
     checksum = ~checksum;
 
     if (!ret || checksum!=status_packet_[nparams+5]) {
-        rx_error_flag_ = true; 
+        rx_error_flag_ = true;
         return COMM_RXCORRUPT;
     }
 
@@ -187,9 +209,11 @@ Dynamixel::CommStatus Dynamixel::send_instruction_packet(unsigned char id, unsig
     }
 
     // TODO: halfdupex TX ON
-    int packet_length   = nparams + 6;
-    int nbytes_sent  = write(serial_fd_, instruction_packet_, packet_length);
+    int packet_length = nparams + 6;
+    set_rts(1);
+    int nbytes_sent = write(serial_fd_, instruction_packet_, packet_length);
     tcdrain(serial_fd_);
+    set_rts(0);
     // TODO: halfdupex TX OFF
 
     return packet_length == nbytes_sent ? COMM_TXSUCCESS : COMM_TXFAIL;
@@ -243,5 +267,23 @@ Dynamixel::CommStatus Dynamixel::write_byte(unsigned char id, unsigned char addr
 Dynamixel::CommStatus Dynamixel::write_word(unsigned char id, unsigned char address, int value) {
     const unsigned char parameters[3] = {address, low_byte(value), high_byte(value)};
     return send_instruction_read_status(id, 0x03, parameters, 3);
+}
+
+int Dynamixel::set_rts(int level) {
+    int status;
+    if (ioctl(serial_fd_, TIOCMGET, &status) == -1) {
+        std::cerr << "set_rts() error" << std::endl;
+        return 0;
+    }
+    if (level) { // TODO why low?
+        status &= ~TIOCM_RTS;
+    } else {
+        status |= TIOCM_RTS;
+    }
+    if (ioctl(serial_fd_, TIOCMSET, &status) == -1) {
+        std::cerr << "set_rts() error" << std::endl;
+        return 0;
+    }
+    return 1;
 }
 
