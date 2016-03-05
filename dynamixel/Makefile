@@ -1,5 +1,5 @@
-SYSCONF_LINK = g++
-CPPFLAGS     = -Wall -Wextra -Weffc++ -pedantic -std=c++98 -O2
+SYSCONF_LINK = arm-oe-linux-gnueabi-g++
+CPPFLAGS     = -Wall -Wextra -Weffc++ -pedantic -std=c++98 -O2 -march=armv5te  -marm 
 LDFLAGS      =
 LIBS         = -lm
 

@@ -10,7 +10,9 @@
 
 #include "dynamixel.h"
 
+
 int main() {
+
     srand(time(NULL));
 
     Dynamixel dxl(34); // 57600 baud
@@ -22,8 +24,8 @@ int main() {
     }
 
     while (1) {
-        int pos = rand()%200-100;
-        std::cerr << dxl.set_goal_position(1,512+leg) << std::endl;
+        int pos = rand()%100-50;
+        std::cerr << dxl.set_goal_position(1,512+pos) << std::endl;
         usleep(1000*500);
     }
 
