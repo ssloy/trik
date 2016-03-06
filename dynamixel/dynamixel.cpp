@@ -234,12 +234,12 @@ Dynamixel::CommStatus Dynamixel::send_instruction_packet(unsigned char id, unsig
 
     // TODO: halfdupex TX ON
     int packet_length = nparams + 6;
-    *((unsigned char *)(void *)gpioAddress + 0x18 + 1) |= 1;
+    *((unsigned char *)(void *)gpioAddress + 0x18 + 3) |= 8;
 //    set_rts(1);
     int nbytes_sent = write(serial_fd_, instruction_packet_, packet_length);
     usleep(1500);
 //    tcdrain(serial_fd_);
-        *((unsigned char *)(void *)gpioAddress + 0x1C + 1) |= 1;
+        *((unsigned char *)(void *)gpioAddress + 0x1C + 3) |= 8;
 //    set_rts(0);
     // TODO: halfdupex TX OFF
 
