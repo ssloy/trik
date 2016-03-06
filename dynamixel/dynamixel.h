@@ -35,7 +35,7 @@ public:
     CommStatus reset_to_factory_defaults(unsigned char id);
 
 private:
-    int set_rts(int level);
+    int set_direction(int level);
 
     CommStatus rx(unsigned char offset, unsigned char toread, int timeout_ms);
     CommStatus read_status_packet();

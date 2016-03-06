@@ -10,14 +10,10 @@
 
 #include "dynamixel.h"
 
-
 int main() {
-
     srand(time(NULL));
-
     Dynamixel dxl(34); // 57600 baud
 
-    srand(time(NULL));
     if (!dxl.open_serial("/dev/ttyS0")) {
         std::cerr << "Can not open serial device" << std::endl;
         return -1;
@@ -25,7 +21,7 @@ int main() {
 
     while (1) {
         int pos = rand()%100-50;
-        std::cerr << dxl.set_goal_position(1,512+pos) << std::endl;
+        std::cerr << dxl.set_goal_position(1, 512+pos) << std::endl;
         usleep(1000*500);
     }
 
