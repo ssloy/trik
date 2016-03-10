@@ -34,6 +34,8 @@ int count_errors(unsigned char *buf) { // 1980 bytes in the buffer (90 packets)
 
 
 
+
+int maxs = -1;
 void drop_point(std::ofstream &ofs, unsigned char *data, int angle_degrees) { // 4 bytes in the data buffer
     int flag1 = (data[1] & 0x80) >> 7;  // No return/max range/too low of reflectivity
     //  int flag2 = (data[1] & 0x40) >> 6;  // Object too close, possible poor reading due to proximity kicks in at < 0.6m
@@ -42,7 +44,10 @@ void drop_point(std::ofstream &ofs, unsigned char *data, int angle_degrees) { //
     float angle = angle_degrees*M_PI/180.;
 
     int dist_mm  = data[0] | (( data[1] & 0x3F) << 8);    // 14 bits for the distance
-//    int strength = data[2] | (data[3] << 8);              // 16 bits for the signal strength
+    int strength = data[2] | (data[3] << 8);              // 16 bits for the signal strength
+    maxs = strength;
+    return;
+//    std::cerr << "s: " << strength << std::endl;
     float x = dist_mm*cos(angle);
     float y = dist_mm*sin(angle);
     ofs << x << " " << y << " " << nframe << std::endl;
@@ -51,12 +56,16 @@ void drop_point(std::ofstream &ofs, unsigned char *data, int angle_degrees) { //
 
 void drop_distances(std::ofstream &ofs, unsigned char *buf) {
     int angle_degrees = 0;
+    int MAXS = -1;
     for (int p=0; p<90; p++) {
+//        std::cerr << "#rpm: " << rpm(buf + p*22) << std::endl;
         ofs /*<< "#rpm: " << rpm(buf + p*22)*/ << std::endl;
         for (int i=0; i<4; i++) {
             drop_point(ofs, buf + p*22 + 4 + i*4, angle_degrees++);
+            MAXS = std::max(MAXS, maxs);
         }
     }
+    std::cerr << "max strength: " << MAXS << std::endl;
     nframe++;
 }
 
@@ -111,7 +120,7 @@ int main(int argc, char *argv[]) {
                 idx = 0;
             }
         }
-        std::cerr << "gna\n";
+//        std::cerr << "gna\n";
     }
     close(tty_fd);
     ofs.close();

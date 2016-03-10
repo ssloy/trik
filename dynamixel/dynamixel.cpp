@@ -54,7 +54,7 @@ bool Dynamixel::open_serial(const char *serial_device) {
     }
     tcflag_t c_cflag = B1000000;
     switch (baud_number_) {
-        case 1:   c_cflag = B1000000; break;
+        case 1:   c_cflag = B921600; /*B1000000;*/ break;
         case 3:   c_cflag = B500000;  break;
 //        case 4:   c_cflag = B400000;  break;
 //        case 7:   c_cflag = B250000;  break;
@@ -237,11 +237,16 @@ Dynamixel::CommStatus Dynamixel::send_instruction_packet(unsigned char id, unsig
         rx_error_flag_ = false;
     }
 
+
     int packet_length = nparams + 6;
+
     set_direction(1); // halfdupex TX ON
     int nbytes_sent = write(serial_fd_, instruction_packet_, packet_length);
 #ifdef TRIK_GPIO1_11_DIR
-    usleep(byte_transfer_time_ms_*1000*nbytes_sent);
+    volatile unsigned int uiBusyWait=0;
+    do {
+        uiBusyWait++;
+    } while (uiBusyWait<800);
 #else
     tcdrain(serial_fd_); // TODO actually, tcdrain takes up to 10 times it really should, thus failing reception of status packet, check how it behaves on your platform
 #endif
