@@ -9,32 +9,11 @@
 #include <cstdlib>
 #include <ctime>
 
+#include <windows.h>
+
 #include "dynamixel.h"
 
-#define TRIK_GPIO1_11_DIR
 
-#ifdef TRIK_GPIO1_11_DIR
-
-#include <sys/mman.h>
-#define GPIO_BASE_ADDR 0x01E26000
-
-volatile unsigned long *gpio_base_address;
-
-int gpio_setup() {
-    int  m_mfd;
-    if ((m_mfd = open("/dev/mem", O_RDWR)) < 0) {
-        return -1;
-    }
-    gpio_base_address = (unsigned long*)mmap(NULL, getpagesize(), PROT_READ|PROT_WRITE, MAP_SHARED, m_mfd, GPIO_BASE_ADDR);
-    close(m_mfd);
-
-    if (gpio_base_address == MAP_FAILED) {
-        return -2;
-    }
-    return 0;
-}
-
-#endif
 
 
 inline unsigned char high_byte(int v) { return (v & 0xFF00) >> 8; }
@@ -43,52 +22,51 @@ inline unsigned char  low_byte(int v) { return  v & 0xFF; }
 Dynamixel::Dynamixel(int baud_number) : serial_fd_(-1), baud_number_(baud_number), baud_rate_(), byte_transfer_time_ms_(), rx_error_flag_(true) {
     baud_rate_ = 2000000.0f/(float)(baud_number_+1);
     byte_transfer_time_ms_ = (float)((1000.0f / baud_rate_) * 10.0f);
-#ifdef TRIK_GPIO1_11_DIR
-    gpio_setup();
-#endif
 }
 
 bool Dynamixel::open_serial(const char *serial_device) {
-    if ((serial_fd_ = open(serial_device, O_RDWR|O_NOCTTY|O_NONBLOCK)) < 0) {
-        return false;
-    }
-    tcflag_t c_cflag = B1000000;
-    switch (baud_number_) {
-        case 1:   c_cflag = B921600; /*B1000000;*/ break;
-        case 3:   c_cflag = B500000;  break;
-//        case 4:   c_cflag = B400000;  break;
-//        case 7:   c_cflag = B250000;  break;
-//        case 9:   c_cflag = B200000;  break;
-        case 16:  c_cflag = B115200;  break;
-        case 34:  c_cflag = B57600;   break;
-        case 103: c_cflag = B19200;   break;
-        case 207: c_cflag = B9600;    break;
-        default: {
-            std::cerr << "Bad baud number" << std::endl;
-            return false;
-        }
-    }
+	serial_fd_ = CreateFileA("\\\\.\\COM3", GENERIC_READ|GENERIC_WRITE,
+			0,                          /* no share  */
+			NULL,                       /* no security */
+			OPEN_EXISTING,
+			0,                          /* no threads */
+			NULL);                      /* no templates */
+	char mode_str[] = "baud=1000000 data=8 parity=n stop=1";
+	if(serial_fd_==INVALID_HANDLE_VALUE) return false;
+	DCB port_settings;
+	memset(&port_settings, 0, sizeof(port_settings));  /* clear the new struct  */
+	port_settings.DCBlength = sizeof(port_settings);
 
-    termios tty_opt;
-    memset(&tty_opt, 0, sizeof(tty_opt));
-    tty_opt.c_cflag       = c_cflag|CS8|CLOCAL|CREAD;
-    tty_opt.c_iflag       = IGNPAR;
-    tty_opt.c_oflag       = 0;
-    tty_opt.c_lflag       = 0;
-    tty_opt.c_cc[VTIME]   = 0;
-    tty_opt.c_cc[VMIN]    = 0;
+	if(!BuildCommDCBA(mode_str, &port_settings)) {
+		//		printf("unable to set comport dcb settings\n");
+		CloseHandle(serial_fd_);
+		return false;
+	}
+	if(!SetCommState(serial_fd_, &port_settings)) {
+		//		  printf("unable to set comport cfg settings\n");
+		CloseHandle(serial_fd_);
+		return false;
+	}
 
-    tcflush(serial_fd_, TCIFLUSH);
-    tcsetattr(serial_fd_, TCSANOW, &tty_opt);
+	COMMTIMEOUTS Cptimeouts;
 
-    set_direction(0);
+	Cptimeouts.ReadIntervalTimeout         = MAXDWORD;
+	Cptimeouts.ReadTotalTimeoutMultiplier  = 0;
+	Cptimeouts.ReadTotalTimeoutConstant    = 0;
+	Cptimeouts.WriteTotalTimeoutMultiplier = 0;
+	Cptimeouts.WriteTotalTimeoutConstant   = 0;
 
-    return true;
+	if(!SetCommTimeouts(erial_fd_ &Cptimeouts)) {
+		//    printf("unable to set comport time-out settings\n");
+		CloseHandle(serial_fd_);
+		return false;
+	}
+	return true;
 }
 
 void Dynamixel::close_serial() {
     if (serial_fd_ != -1) {
-        close(serial_fd_);
+		CloseHandle(serial_fd_);
         serial_fd_ = -1;
     }
 }
@@ -151,7 +129,8 @@ Dynamixel::CommStatus Dynamixel::rx(unsigned char offset, unsigned char toread, 
 
     int received = 0;
     while (received < toread) {
-        int n = read(serial_fd_, status_packet_+offset+received, toread-received);
+        int n = 0;
+		ReadFile(serial_fd_, status_packet_+offset+received, toread-received, (LPDWORD)((void *)&n), NULL);
         if (n>=0) {
             received += n;
         } else {
@@ -233,7 +212,7 @@ Dynamixel::CommStatus Dynamixel::send_instruction_packet(unsigned char id, unsig
     instruction_packet_[nparams+5] = ~checksum;
 
     if (rx_error_flag_) {
-        tcflush(serial_fd_, TCIFLUSH);
+		PurgeComm(serial_fd_, PURGE_RXCLEAR | PURGE_RXABORT);
         rx_error_flag_ = false;
     }
 
@@ -241,15 +220,10 @@ Dynamixel::CommStatus Dynamixel::send_instruction_packet(unsigned char id, unsig
     int packet_length = nparams + 6;
 
     set_direction(1); // halfdupex TX ON
-    int nbytes_sent = write(serial_fd_, instruction_packet_, packet_length);
-#ifdef TRIK_GPIO1_11_DIR
-    volatile unsigned int uiBusyWait=0;
-    do {
-        uiBusyWait++;
-    } while (uiBusyWait<800);
-#else
-    tcdrain(serial_fd_); // TODO actually, tcdrain takes up to 10 times it really should, thus failing reception of status packet, check how it behaves on your platform
-#endif
+    int nbytes_sent = 0;
+	WriteFile(serial_fd_, instruction_packet_, packet_length, (LPDWORD)((void *)&n), NULL);
+
+// TODO    tcdrain(serial_fd_); // TODO actually, tcdrain takes up to 10 times it really should, thus failing reception of status packet, check how it behaves on your platform
     set_direction(0); // halfdupex TX OFF
 
     return packet_length == nbytes_sent ? COMM_TXSUCCESS : COMM_TXFAIL;
@@ -305,29 +279,4 @@ Dynamixel::CommStatus Dynamixel::write_word(unsigned char id, unsigned char addr
     return send_instruction_read_status(id, 0x03, parameters, 3);
 }
 
-int Dynamixel::set_direction(int level) {
-#ifdef TRIK_GPIO1_11_DIR
-    if (level) {
-        *((unsigned char *)(void *)gpio_base_address + 0x18 + 3) |= 8;
-    } else {
-        *((unsigned char *)(void *)gpio_base_address + 0x1C + 3) |= 8;
-    }
-#else
-    int status;
-    if (ioctl(serial_fd_, TIOCMGET, &status) == -1) {
-        std::cerr << "set_rts() error" << std::endl;
-        return 0;
-    }
-    if (level) { // TODO probably inverted on your platform, check this one
-        status &= ~TIOCM_RTS;
-    } else {
-        status |= TIOCM_RTS;
-    }
-    if (ioctl(serial_fd_, TIOCMSET, &status) == -1) {
-        std::cerr << "set_rts() error" << std::endl;
-        return 0;
-    }
-#endif
-    return 1;
-}
 

@@ -35,8 +35,6 @@ public:
     CommStatus reset_to_factory_defaults(unsigned char id);
 
 private:
-    int set_direction(int level);
-
     CommStatus rx(unsigned char offset, unsigned char toread, int timeout_ms);
     CommStatus read_status_packet();
     CommStatus send_instruction_packet(unsigned char id, unsigned char instruction, const unsigned char *parameters, unsigned char nparams);
@@ -49,7 +47,7 @@ private:
 
 
     static const int max_packet_length_ = 255;
-    int serial_fd_;
+    HANDLE serial_fd_;
     int baud_number_;
     float baud_rate_;
     float byte_transfer_time_ms_;
